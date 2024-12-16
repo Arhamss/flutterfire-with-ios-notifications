@@ -428,8 +428,6 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 #if TARGET_OS_OSX
 - (void)application:(NSApplication *)application
     didReceiveRemoteNotification:(NSDictionary *)userInfo {
-  // Only handle notifications from FCM.
-
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
@@ -438,7 +436,6 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   } else {
     [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
   }
-
 }
 #endif
 
@@ -455,7 +452,6 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 #endif
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
-  // Only handle notifications from FCM.
 
   if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
     __block BOOL completed = NO;
@@ -476,20 +472,6 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
           }
         }];
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)),
-                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-                     @synchronized(self) {
-                       if (completed == NO) {
-                         completed = YES;
-                         completionHandler(UIBackgroundFetchResultNewData);
-                         if (backgroundTaskId != UIBackgroundTaskInvalid) {
-                           [application endBackgroundTask:backgroundTaskId];
-                           backgroundTaskId = UIBackgroundTaskInvalid;
-                         }
-                       }
-                     }
-                   });
-
     [_channel invokeMethod:@"Messaging#onBackgroundMessage"
                  arguments:notificationDict
                     result:^(id _Nullable result) {
@@ -505,11 +487,8 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
                       }
                     }];
   } else {
-    // If "alert" (i.e. notification) is present in userInfo, this will be called by the other
-    // "Messaging#onMessage" channel handler
-    if (userInfo[@"aps"] != nil && userInfo[@"aps"][@"alert"] == nil) {
-      [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-    }
+    // Handle all notifications in foreground
+    [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
     completionHandler(UIBackgroundFetchResultNoData);
   }
 
