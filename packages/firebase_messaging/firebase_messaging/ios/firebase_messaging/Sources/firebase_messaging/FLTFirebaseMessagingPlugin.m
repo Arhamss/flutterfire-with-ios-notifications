@@ -358,10 +358,16 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
              withCompletionHandler:(void (^)(void))completionHandler
     API_AVAILABLE(macos(10.14), ios(10.0)) {
   NSDictionary *remoteNotification = response.notification.request.content.userInfo;
-  _notificationOpenedAppID = remoteNotification[@"gcm.message_id"];
-  // We want to handle all notifications and fire onMessageOpenedApp
+  
+  // Store message ID regardless of whether it's FCM or not
+  _notificationOpenedAppID = remoteNotification[@"gcm.message_id"] ?: 
+                            response.notification.request.identifier;
+                            
+  // Convert to dictionary and ensure it has a messageId
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:remoteNotification];
+      
+  // Always trigger onMessageOpenedApp for any notification interaction
   [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
 
   // Forward on to any other delegates.
@@ -800,64 +806,30 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   NSMutableDictionary *notification = [[NSMutableDictionary alloc] init];
   NSMutableDictionary *notificationIOS = [[NSMutableDictionary alloc] init];
 
-  // message.data
-  for (id key in userInfo) {
-    // message.messageId
-    if ([key isEqualToString:@"gcm.message_id"] || [key isEqualToString:@"google.message_id"] ||
-        [key isEqualToString:@"message_id"]) {
-      message[@"messageId"] = userInfo[key];
-      continue;
-    }
-
-    // message.messageType
-    if ([key isEqualToString:@"message_type"]) {
-      message[@"messageType"] = userInfo[key];
-      continue;
-    }
-
-    // message.collapseKey
-    if ([key isEqualToString:@"collapse_key"]) {
-      message[@"collapseKey"] = userInfo[key];
-      continue;
-    }
-
-    // message.from
-    if ([key isEqualToString:@"from"]) {
-      message[@"from"] = userInfo[key];
-      continue;
-    }
-
-    // message.sentTime
-    if ([key isEqualToString:@"google.c.a.ts"]) {
-      message[@"sentTime"] = userInfo[key];
-      continue;
-    }
-
-    // message.to
-    if ([key isEqualToString:@"to"] || [key isEqualToString:@"google.to"]) {
-      message[@"to"] = userInfo[key];
-      continue;
-    }
-
-    // build data dict from remaining keys but skip keys that shouldn't be included in data
-    if ([key isEqualToString:@"aps"]) {
-      continue;
-    }
-
-    // message.apple.imageUrl
-    if ([key isEqualToString:@"fcm_options"]) {
-      if (userInfo[key] != nil && userInfo[key][@"image"] != nil) {
-        notificationIOS[@"imageUrl"] = userInfo[key][@"image"];
-      }
-      continue;
-    }
-
-    data[key] = userInfo[key];
+  // message.messageId - try different possible keys for message ID
+  NSString *messageId = userInfo[@"gcm.message_id"] ?: 
+                       userInfo[@"google.message_id"] ?: 
+                       userInfo[@"message_id"];
+                       
+  if (messageId == nil) {
+    // Generate a unique ID for non-FCM notifications
+    messageId = [[NSUUID UUID] UUIDString];
   }
+  message[@"messageId"] = messageId;
+
+  // For non-FCM notifications, ensure we include all userInfo in data
+  for (id key in userInfo) {
+    if (![key isEqualToString:@"aps"] && 
+        ![key isEqualToString:@"gcm.message_id"] &&
+        ![key isEqualToString:@"google.message_id"] &&
+        ![key isEqualToString:@"message_id"]) {
+      data[key] = userInfo[key];
+    }
+  }
+  
   message[@"data"] = data;
 
-  BOOL hasNotificationContent = NO;
-
+  // Process aps dictionary for notification content
   if (userInfo[@"aps"] != nil) {
     NSDictionary *apsDict = userInfo[@"aps"];
     // message.category
@@ -882,7 +854,6 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 
     // message.notification.*
     if (apsDict[@"alert"] != nil) {
-      hasNotificationContent = YES;
       // can be a string or dictionary
       if ([apsDict[@"alert"] isKindOfClass:[NSString class]]) {
         // message.notification.title
@@ -942,13 +913,11 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 
     // message.notification.apple.badge
     if (apsDict[@"badge"] != nil) {
-      hasNotificationContent = YES;
       notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
     }
 
     // message.notification.apple.sound
     if (apsDict[@"sound"] != nil) {
-      hasNotificationContent = YES;
       if ([apsDict[@"sound"] isKindOfClass:[NSString class]]) {
         // message.notification.apple.sound
         notificationIOS[@"sound"] = @{
@@ -981,14 +950,8 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     }
   }
 
-  // Always include a notification object, even if empty
   notification[@"apple"] = notificationIOS;
   message[@"notification"] = notification;
-
-  // If no messageId was found, generate one
-  if (message[@"messageId"] == nil) {
-    message[@"messageId"] = [[NSUUID UUID] UUIDString];
-  }
 
   return message;
 }
