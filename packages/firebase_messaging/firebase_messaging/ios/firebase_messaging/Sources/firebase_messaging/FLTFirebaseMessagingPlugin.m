@@ -318,12 +318,6 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))completionHandler
     API_AVAILABLE(macos(10.14), ios(10.0)) {
-  // We only want to handle FCM notifications.
-
-  // FIX - bug on iOS 18 which results in duplicate foreground notifications posted
-  // See this Apple issue: https://forums.developer.apple.com/forums/thread/761597
-  // when it has been resolved, "_foregroundUniqueIdentifier" can be removed (i.e. the commit for
-  // this fix)
   NSString *notificationIdentifier = notification.request.identifier;
 
   if (![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
@@ -332,7 +326,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
   }
 
-  // Forward on to any other delegates amd allow them to control presentation behavior.
+  // Forward on to any other delegates and allow them to control presentation behavior.
   if (_originalNotificationCenterDelegate != nil &&
       _originalNotificationCenterDelegateRespondsTo.willPresentNotification) {
     [_originalNotificationCenterDelegate userNotificationCenter:center
@@ -436,14 +430,14 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     didReceiveRemoteNotification:(NSDictionary *)userInfo {
   // Only handle notifications from FCM.
 
-    NSDictionary *notificationDict =
-        [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
+  NSDictionary *notificationDict =
+      [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
-    if ([NSApplication sharedApplication].isActive) {
-      [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-    } else {
-      [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
-    }
+  if ([NSApplication sharedApplication].isActive) {
+    [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
+  } else {
+    [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
+  }
 
 }
 #endif
@@ -463,63 +457,63 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
   // Only handle notifications from FCM.
 
-    if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
-      __block BOOL completed = NO;
+  if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
+    __block BOOL completed = NO;
 
-      // If app is in background state, register background task to guarantee async queues aren't
-      // frozen.
-      UIBackgroundTaskIdentifier __block backgroundTaskId =
-          [application beginBackgroundTaskWithExpirationHandler:^{
-            @synchronized(self) {
-              if (completed == NO) {
-                completed = YES;
-                completionHandler(UIBackgroundFetchResultNewData);
-                if (backgroundTaskId != UIBackgroundTaskInvalid) {
-                  [application endBackgroundTask:backgroundTaskId];
-                  backgroundTaskId = UIBackgroundTaskInvalid;
-                }
+    // If app is in background state, register background task to guarantee async queues aren't
+    // frozen.
+    UIBackgroundTaskIdentifier __block backgroundTaskId =
+        [application beginBackgroundTaskWithExpirationHandler:^{
+          @synchronized(self) {
+            if (completed == NO) {
+              completed = YES;
+              completionHandler(UIBackgroundFetchResultNewData);
+              if (backgroundTaskId != UIBackgroundTaskInvalid) {
+                [application endBackgroundTask:backgroundTaskId];
+                backgroundTaskId = UIBackgroundTaskInvalid;
               }
             }
-          }];
+          }
+        }];
 
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)),
-                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-                       @synchronized(self) {
-                         if (completed == NO) {
-                           completed = YES;
-                           completionHandler(UIBackgroundFetchResultNewData);
-                           if (backgroundTaskId != UIBackgroundTaskInvalid) {
-                             [application endBackgroundTask:backgroundTaskId];
-                             backgroundTaskId = UIBackgroundTaskInvalid;
-                           }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+                     @synchronized(self) {
+                       if (completed == NO) {
+                         completed = YES;
+                         completionHandler(UIBackgroundFetchResultNewData);
+                         if (backgroundTaskId != UIBackgroundTaskInvalid) {
+                           [application endBackgroundTask:backgroundTaskId];
+                           backgroundTaskId = UIBackgroundTaskInvalid;
                          }
                        }
-                     });
+                     }
+                   });
 
-      [_channel invokeMethod:@"Messaging#onBackgroundMessage"
-                   arguments:notificationDict
-                      result:^(id _Nullable result) {
-                        @synchronized(self) {
-                          if (completed == NO) {
-                            completed = YES;
-                            completionHandler(UIBackgroundFetchResultNewData);
-                            if (backgroundTaskId != UIBackgroundTaskInvalid) {
-                              [application endBackgroundTask:backgroundTaskId];
-                              backgroundTaskId = UIBackgroundTaskInvalid;
-                            }
+    [_channel invokeMethod:@"Messaging#onBackgroundMessage"
+                 arguments:notificationDict
+                    result:^(id _Nullable result) {
+                      @synchronized(self) {
+                        if (completed == NO) {
+                          completed = YES;
+                          completionHandler(UIBackgroundFetchResultNewData);
+                          if (backgroundTaskId != UIBackgroundTaskInvalid) {
+                            [application endBackgroundTask:backgroundTaskId];
+                            backgroundTaskId = UIBackgroundTaskInvalid;
                           }
                         }
-                      }];
-    } else {
-      // If "alert" (i.e. notification) is present in userInfo, this will be called by the other
-      // "Messaging#onMessage" channel handler
-      if (userInfo[@"aps"] != nil && userInfo[@"aps"][@"alert"] == nil) {
-        [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-      }
-      completionHandler(UIBackgroundFetchResultNoData);
+                      }
+                    }];
+  } else {
+    // If "alert" (i.e. notification) is present in userInfo, this will be called by the other
+    // "Messaging#onMessage" channel handler
+    if (userInfo[@"aps"] != nil && userInfo[@"aps"][@"alert"] == nil) {
+      [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
     }
+    completionHandler(UIBackgroundFetchResultNoData);
+  }
 
-    return YES;
+  return YES;
 }  // didReceiveRemoteNotification
 #endif
 
