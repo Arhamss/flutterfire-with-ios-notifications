@@ -817,137 +817,65 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   }
   message[@"messageId"] = messageId;
 
-  // For non-FCM notifications, ensure we include all userInfo in data
-  for (id key in userInfo) {
-    if (![key isEqualToString:@"aps"] && 
-        ![key isEqualToString:@"gcm.message_id"] &&
-        ![key isEqualToString:@"google.message_id"] &&
-        ![key isEqualToString:@"message_id"]) {
-      data[key] = userInfo[key];
-    }
-  }
+  // For non-FCM notifications, copy all data except reserved keys
+  NSSet *reservedKeys = [NSSet setWithArray:@[@"aps", @"gcm.message_id", @"google.message_id", @"message_id"]];
   
+  // First copy all data
+  [userInfo enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+    if (![reservedKeys containsObject:key]) {
+      // Ensure the value is JSON serializable
+      if ([value isKindOfClass:[NSString class]] ||
+          [value isKindOfClass:[NSNumber class]] ||
+          [value isKindOfClass:[NSArray class]] ||
+          [value isKindOfClass:[NSDictionary class]] ||
+          [value isKindOfClass:[NSNull class]]) {
+        data[key] = value;
+      } else {
+        data[key] = [value description];
+      }
+    }
+  }];
+
   message[@"data"] = data;
 
-  // Process aps dictionary for notification content
+  // Handle notification content from aps dictionary
   if (userInfo[@"aps"] != nil) {
     NSDictionary *apsDict = userInfo[@"aps"];
-    // message.category
-    if (apsDict[@"category"] != nil) {
-      message[@"category"] = apsDict[@"category"];
-    }
-
-    // message.threadId
-    if (apsDict[@"thread-id"] != nil) {
-      message[@"threadId"] = apsDict[@"thread-id"];
-    }
-
-    // message.contentAvailable
-    if (apsDict[@"content-available"] != nil) {
-      message[@"contentAvailable"] = @([apsDict[@"content-available"] boolValue]);
-    }
-
-    // message.mutableContent
-    if (apsDict[@"mutable-content"] != nil && [apsDict[@"mutable-content"] intValue] == 1) {
-      message[@"mutableContent"] = @([apsDict[@"mutable-content"] boolValue]);
-    }
-
-    // message.notification.*
-    if (apsDict[@"alert"] != nil) {
-      // can be a string or dictionary
-      if ([apsDict[@"alert"] isKindOfClass:[NSString class]]) {
-        // message.notification.title
-        notification[@"title"] = apsDict[@"alert"];
-      } else if ([apsDict[@"alert"] isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *apsAlertDict = apsDict[@"alert"];
-
-        // message.notification.title
-        if (apsAlertDict[@"title"] != nil) {
-          notification[@"title"] = apsAlertDict[@"title"];
-        }
-
-        // message.notification.titleLocKey
-        if (apsAlertDict[@"title-loc-key"] != nil) {
-          notification[@"titleLocKey"] = apsAlertDict[@"title-loc-key"];
-        }
-
-        // message.notification.titleLocArgs
-        if (apsAlertDict[@"title-loc-args"] != nil) {
-          notification[@"titleLocArgs"] = apsAlertDict[@"title-loc-args"];
-        }
-
-        // message.notification.body
-        if (apsAlertDict[@"body"] != nil) {
-          notification[@"body"] = apsAlertDict[@"body"];
-        }
-
-        // message.notification.bodyLocKey
-        if (apsAlertDict[@"loc-key"] != nil) {
-          notification[@"bodyLocKey"] = apsAlertDict[@"loc-key"];
-        }
-
-        // message.notification.bodyLocArgs
-        if (apsAlertDict[@"loc-args"] != nil) {
-          notification[@"bodyLocArgs"] = apsAlertDict[@"loc-args"];
-        }
-
-        // Apple only
-        // message.notification.apple.subtitle
-        if (apsAlertDict[@"subtitle"] != nil) {
-          notificationIOS[@"subtitle"] = apsAlertDict[@"subtitle"];
-        }
-
-        // Apple only
-        // message.notification.apple.subtitleLocKey
-        if (apsAlertDict[@"subtitle-loc-key"] != nil) {
-          notificationIOS[@"subtitleLocKey"] = apsAlertDict[@"subtitle-loc-key"];
-        }
-
-        // Apple only
-        // message.notification.apple.subtitleLocArgs
-        if (apsAlertDict[@"subtitle-loc-args"] != nil) {
-          notificationIOS[@"subtitleLocArgs"] = apsAlertDict[@"subtitle-loc-args"];
-        }
+    
+    // Handle alert content
+    id alert = apsDict[@"alert"];
+    if (alert != nil) {
+      if ([alert isKindOfClass:[NSString class]]) {
+        notification[@"title"] = alert;
+        notification[@"body"] = alert;
+      } else if ([alert isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *alertDict = (NSDictionary *)alert;
+        if (alertDict[@"title"] != nil) notification[@"title"] = alertDict[@"title"];
+        if (alertDict[@"body"] != nil) notification[@"body"] = alertDict[@"body"];
+        if (alertDict[@"subtitle"] != nil) notificationIOS[@"subtitle"] = alertDict[@"subtitle"];
       }
     }
 
-    // message.notification.apple.badge
-    if (apsDict[@"badge"] != nil) {
-      notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
-    }
-
-    // message.notification.apple.sound
+    // Handle other aps content
+    if (apsDict[@"badge"] != nil) notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
     if (apsDict[@"sound"] != nil) {
       if ([apsDict[@"sound"] isKindOfClass:[NSString class]]) {
-        // message.notification.apple.sound
         notificationIOS[@"sound"] = @{
           @"name" : apsDict[@"sound"],
           @"critical" : @NO,
           @"volume" : @1,
         };
-      } else if ([apsDict[@"sound"] isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *apsSoundDict = apsDict[@"sound"];
-        NSMutableDictionary *notificationIOSSound = [[NSMutableDictionary alloc] init];
-
-        // message.notification.apple.sound.name String
-        if (apsSoundDict[@"name"] != nil) {
-          notificationIOSSound[@"name"] = apsSoundDict[@"name"];
-        }
-
-        // message.notification.apple.sound.critical Boolean
-        if (apsSoundDict[@"critical"] != nil) {
-          notificationIOSSound[@"critical"] = @([apsSoundDict[@"critical"] boolValue]);
-        }
-
-        // message.notification.apple.sound.volume Number
-        if (apsSoundDict[@"volume"] != nil) {
-          notificationIOSSound[@"volume"] = apsSoundDict[@"volume"];
-        }
-
-        // message.notification.apple.sound
-        notificationIOS[@"sound"] = notificationIOSSound;
       }
     }
+    
+    // Copy other aps fields to data
+    [apsDict enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+      if (![key isEqualToString:@"alert"] && 
+          ![key isEqualToString:@"badge"] && 
+          ![key isEqualToString:@"sound"]) {
+        data[[@"aps_" stringByAppendingString:key]] = value;
+      }
+    }];
   }
 
   notification[@"apple"] = notificationIOS;
