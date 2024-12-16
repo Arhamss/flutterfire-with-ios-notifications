@@ -849,6 +849,8 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   }
   message[@"data"] = data;
 
+  BOOL hasNotificationContent = NO;
+
   if (userInfo[@"aps"] != nil) {
     NSDictionary *apsDict = userInfo[@"aps"];
     // message.category
@@ -873,6 +875,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 
     // message.notification.*
     if (apsDict[@"alert"] != nil) {
+      hasNotificationContent = YES;
       // can be a string or dictionary
       if ([apsDict[@"alert"] isKindOfClass:[NSString class]]) {
         // message.notification.title
@@ -928,20 +931,17 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
           notificationIOS[@"subtitleLocArgs"] = apsAlertDict[@"subtitle-loc-args"];
         }
       }
-
-      notification[@"apple"] = notificationIOS;
-      message[@"notification"] = notification;
     }
 
     // message.notification.apple.badge
     if (apsDict[@"badge"] != nil) {
+      hasNotificationContent = YES;
       notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
-      notification[@"apple"] = notificationIOS;
-      message[@"notification"] = notification;
     }
 
     // message.notification.apple.sound
     if (apsDict[@"sound"] != nil) {
+      hasNotificationContent = YES;
       if ([apsDict[@"sound"] isKindOfClass:[NSString class]]) {
         // message.notification.apple.sound
         notificationIOS[@"sound"] = @{
@@ -971,11 +971,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
         // message.notification.apple.sound
         notificationIOS[@"sound"] = notificationIOSSound;
       }
-
-      notification[@"apple"] = notificationIOS;
-      message[@"notification"] = notification;
     }
   }
+
+  // Always include a notification object, even if empty
+  notification[@"apple"] = notificationIOS;
+  message[@"notification"] = notification;
 
   // If no messageId was found, generate one
   if (message[@"messageId"] == nil) {
