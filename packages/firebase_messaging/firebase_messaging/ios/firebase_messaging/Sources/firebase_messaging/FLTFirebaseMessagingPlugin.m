@@ -436,9 +436,9 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
-  if ([NSApplication sharedApplication].isActive) {
-    [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-  } else {
+  [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
+
+  if (![NSApplication sharedApplication].isActive){
     [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
   }
 }
