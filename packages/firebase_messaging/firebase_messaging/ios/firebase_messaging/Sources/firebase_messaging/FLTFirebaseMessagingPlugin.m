@@ -453,6 +453,13 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
+  // Add this block to handle notification taps for data-only messages
+  if ([UIApplication sharedApplication].applicationState == UIApplicationStateInactive ||
+      [UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
+    _notificationOpenedAppID = userInfo[@"gcm.message_id"];
+    [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
+  }
+
   if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
     __block BOOL completed = NO;
 
