@@ -326,8 +326,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   // this fix)
   NSString *notificationIdentifier = notification.request.identifier;
 
-  if (notification.request.content.userInfo[@"gcm.message_id"] &&
-      ![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
+  if (![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin NSDictionaryFromUNNotification:notification];
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
@@ -440,7 +439,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 - (void)application:(NSApplication *)application
     didReceiveRemoteNotification:(NSDictionary *)userInfo {
   // Only handle notifications from FCM.
-  if (userInfo[@"gcm.message_id"]) {
+
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
@@ -449,7 +448,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     } else {
       [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
     }
-  }
+
 }
 #endif
 
