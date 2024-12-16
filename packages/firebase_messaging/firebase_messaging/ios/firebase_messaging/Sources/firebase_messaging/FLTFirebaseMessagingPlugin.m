@@ -320,11 +320,11 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     API_AVAILABLE(macos(10.14), ios(10.0)) {
   NSString *notificationIdentifier = notification.request.identifier;
 
-  if (![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
+
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin NSDictionaryFromUNNotification:notification];
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-  }
+
 
   // Forward on to any other delegates and allow them to control presentation behavior.
   if (_originalNotificationCenterDelegate != nil &&
@@ -358,14 +358,14 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
              withCompletionHandler:(void (^)(void))completionHandler
     API_AVAILABLE(macos(10.14), ios(10.0)) {
   NSDictionary *remoteNotification = response.notification.request.content.userInfo;
-  
+
   // Always store the notification identifier for tap detection
   _notificationOpenedAppID = response.notification.request.identifier;
-                            
+
   // Convert to dictionary and ensure it has a messageId
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:remoteNotification];
-      
+
   // Always trigger onMessageOpenedApp for any notification interaction
   [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
 
@@ -459,10 +459,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
   UIApplicationState state = [UIApplication sharedApplication].applicationState;
-  
-  // Always handle taps, regardless of notification type (FCM or APNS data-only)
+
+  // Handle notification taps for all notification types (FCM, APNS, Sendbird, etc.)
   if (state == UIApplicationStateInactive || state == UIApplicationStateBackground) {
+    // Store a unique identifier for this notification
     _notificationOpenedAppID = [[NSUUID UUID] UUIDString];
+    // Always trigger onMessageOpenedApp for any notification tap
     [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
     completionHandler(UIBackgroundFetchResultNewData);
     return YES;
@@ -779,10 +781,10 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   NSMutableDictionary *notificationIOS = [[NSMutableDictionary alloc] init];
 
   // message.messageId - try different possible keys for message ID
-  NSString *messageId = userInfo[@"gcm.message_id"] ?: 
-                       userInfo[@"google.message_id"] ?: 
+  NSString *messageId = userInfo[@"gcm.message_id"] ?:
+                       userInfo[@"google.message_id"] ?:
                        userInfo[@"message_id"];
-                       
+
   if (messageId == nil) {
     // Generate a unique ID for non-FCM notifications (like Sendbird APNS)
     messageId = [[NSUUID UUID] UUIDString];
@@ -791,7 +793,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 
   // For non-FCM notifications (like Sendbird), copy all data except reserved keys
   NSSet *reservedKeys = [NSSet setWithArray:@[@"aps", @"gcm.message_id", @"google.message_id", @"message_id"]];
-  
+
   // First copy all data including nested dictionaries
   [userInfo enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
     if (![reservedKeys containsObject:key]) {
@@ -813,7 +815,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   // Handle notification content from aps dictionary
   if (userInfo[@"aps"] != nil) {
     NSDictionary *apsDict = userInfo[@"aps"];
-    
+
     // Handle alert content
     id alert = apsDict[@"alert"];
     if (alert != nil) {
@@ -839,11 +841,11 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
         };
       }
     }
-    
+
     // For data-only notifications (like Sendbird), copy all aps content to data
     [apsDict enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
-      if (![key isEqualToString:@"alert"] && 
-          ![key isEqualToString:@"badge"] && 
+      if (![key isEqualToString:@"alert"] &&
+          ![key isEqualToString:@"badge"] &&
           ![key isEqualToString:@"sound"]) {
         // Add aps_ prefix to avoid conflicts
         data[[@"aps_" stringByAppendingString:key]] = value;
@@ -853,7 +855,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 
   notification[@"apple"] = notificationIOS;
   message[@"notification"] = notification;
-  
+
   // For data-only notifications, ensure we have at least an empty notification object
   if ([notification count] == 0) {
     message[@"notification"] = @{@"apple": @{}};
