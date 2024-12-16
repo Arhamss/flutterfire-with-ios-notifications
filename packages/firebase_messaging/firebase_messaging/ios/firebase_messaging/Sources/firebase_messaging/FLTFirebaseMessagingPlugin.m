@@ -833,7 +833,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     }
 
     // build data dict from remaining keys but skip keys that shouldn't be included in data
-    if ([key isEqualToString:@"aps"] || [key hasPrefix:@"gcm."] || [key hasPrefix:@"google."]) {
+    if ([key isEqualToString:@"aps"]) {
       continue;
     }
 
@@ -927,14 +927,15 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
         if (apsAlertDict[@"subtitle-loc-args"] != nil) {
           notificationIOS[@"subtitleLocArgs"] = apsAlertDict[@"subtitle-loc-args"];
         }
-
-        // Apple only
-        // message.notification.apple.badge
-        if (apsDict[@"badge"] != nil) {
-          notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
-        }
       }
 
+      notification[@"apple"] = notificationIOS;
+      message[@"notification"] = notification;
+    }
+
+    // message.notification.apple.badge
+    if (apsDict[@"badge"] != nil) {
+      notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
       notification[@"apple"] = notificationIOS;
       message[@"notification"] = notification;
     }
@@ -943,7 +944,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     if (apsDict[@"sound"] != nil) {
       if ([apsDict[@"sound"] isKindOfClass:[NSString class]]) {
         // message.notification.apple.sound
-        notification[@"sound"] = @{
+        notificationIOS[@"sound"] = @{
           @"name" : apsDict[@"sound"],
           @"critical" : @NO,
           @"volume" : @1,
@@ -974,6 +975,11 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
       notification[@"apple"] = notificationIOS;
       message[@"notification"] = notification;
     }
+  }
+
+  // If no messageId was found, generate one
+  if (message[@"messageId"] == nil) {
+    message[@"messageId"] = [[NSUUID UUID] UUIDString];
   }
 
   return message;
