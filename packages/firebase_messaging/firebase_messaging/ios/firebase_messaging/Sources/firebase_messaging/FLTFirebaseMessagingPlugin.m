@@ -460,19 +460,19 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 
   UIApplicationState state = [UIApplication sharedApplication].applicationState;
   
-  // Handle notification taps for all types of notifications
+  // Always handle taps, regardless of notification type (FCM or APNS data-only)
   if (state == UIApplicationStateInactive || state == UIApplicationStateBackground) {
-    // Store a unique identifier for this notification
     _notificationOpenedAppID = [[NSUUID UUID] UUIDString];
     [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
     completionHandler(UIBackgroundFetchResultNewData);
     return YES;
   }
 
+  // Handle messages based on application state
   if (state == UIApplicationStateBackground) {
-    // Rest of background handling code...
+    [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
+    completionHandler(UIBackgroundFetchResultNewData);
   } else {
-    // Handle all notifications in foreground
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
     completionHandler(UIBackgroundFetchResultNoData);
   }
@@ -784,15 +784,15 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
                        userInfo[@"message_id"];
                        
   if (messageId == nil) {
-    // Generate a unique ID for non-FCM notifications
+    // Generate a unique ID for non-FCM notifications (like Sendbird APNS)
     messageId = [[NSUUID UUID] UUIDString];
   }
   message[@"messageId"] = messageId;
 
-  // For non-FCM notifications, copy all data except reserved keys
+  // For non-FCM notifications (like Sendbird), copy all data except reserved keys
   NSSet *reservedKeys = [NSSet setWithArray:@[@"aps", @"gcm.message_id", @"google.message_id", @"message_id"]];
   
-  // First copy all data
+  // First copy all data including nested dictionaries
   [userInfo enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
     if (![reservedKeys containsObject:key]) {
       // Ensure the value is JSON serializable
@@ -840,11 +840,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
       }
     }
     
-    // Copy other aps fields to data
+    // For data-only notifications (like Sendbird), copy all aps content to data
     [apsDict enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
       if (![key isEqualToString:@"alert"] && 
           ![key isEqualToString:@"badge"] && 
           ![key isEqualToString:@"sound"]) {
+        // Add aps_ prefix to avoid conflicts
         data[[@"aps_" stringByAppendingString:key]] = value;
       }
     }];
@@ -852,6 +853,11 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 
   notification[@"apple"] = notificationIOS;
   message[@"notification"] = notification;
+  
+  // For data-only notifications, ensure we have at least an empty notification object
+  if ([notification count] == 0) {
+    message[@"notification"] = @{@"apple": @{}};
+  }
 
   return message;
 }
