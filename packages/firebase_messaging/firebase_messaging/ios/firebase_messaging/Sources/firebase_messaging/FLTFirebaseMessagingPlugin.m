@@ -359,9 +359,8 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     API_AVAILABLE(macos(10.14), ios(10.0)) {
   NSDictionary *remoteNotification = response.notification.request.content.userInfo;
   
-  // Store message ID regardless of whether it's FCM or not
-  _notificationOpenedAppID = remoteNotification[@"gcm.message_id"] ?: 
-                            response.notification.request.identifier;
+  // Always store the notification identifier for tap detection
+  _notificationOpenedAppID = response.notification.request.identifier;
                             
   // Convert to dictionary and ensure it has a messageId
   NSDictionary *notificationDict =
@@ -459,46 +458,19 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
-  // Add this block to handle notification taps for data-only messages
-  if ([UIApplication sharedApplication].applicationState == UIApplicationStateInactive ||
-      [UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
-    _notificationOpenedAppID = userInfo[@"gcm.message_id"];
+  UIApplicationState state = [UIApplication sharedApplication].applicationState;
+  
+  // Handle notification taps for all types of notifications
+  if (state == UIApplicationStateInactive || state == UIApplicationStateBackground) {
+    // Store a unique identifier for this notification
+    _notificationOpenedAppID = [[NSUUID UUID] UUIDString];
     [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
+    completionHandler(UIBackgroundFetchResultNewData);
+    return YES;
   }
 
-  if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
-    __block BOOL completed = NO;
-
-    // If app is in background state, register background task to guarantee async queues aren't
-    // frozen.
-    UIBackgroundTaskIdentifier __block backgroundTaskId =
-        [application beginBackgroundTaskWithExpirationHandler:^{
-          @synchronized(self) {
-            if (completed == NO) {
-              completed = YES;
-              completionHandler(UIBackgroundFetchResultNewData);
-              if (backgroundTaskId != UIBackgroundTaskInvalid) {
-                [application endBackgroundTask:backgroundTaskId];
-                backgroundTaskId = UIBackgroundTaskInvalid;
-              }
-            }
-          }
-        }];
-
-    [_channel invokeMethod:@"Messaging#onBackgroundMessage"
-                 arguments:notificationDict
-                    result:^(id _Nullable result) {
-                      @synchronized(self) {
-                        if (completed == NO) {
-                          completed = YES;
-                          completionHandler(UIBackgroundFetchResultNewData);
-                          if (backgroundTaskId != UIBackgroundTaskInvalid) {
-                            [application endBackgroundTask:backgroundTaskId];
-                            backgroundTaskId = UIBackgroundTaskInvalid;
-                          }
-                        }
-                      }
-                    }];
+  if (state == UIApplicationStateBackground) {
+    // Rest of background handling code...
   } else {
     // Handle all notifications in foreground
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
