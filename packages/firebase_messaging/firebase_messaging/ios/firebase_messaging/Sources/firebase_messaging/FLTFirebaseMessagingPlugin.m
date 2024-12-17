@@ -368,11 +368,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   _notificationOpenedAppID = remoteNotification[@"gcm.message_id"];
   // We only want to handle FCM notifications and stop firing `onMessageOpenedApp()` when app is
   // coming from a terminated state.
-
+  if (_notificationOpenedAppID != nil &&
+      ![_initialNotificationID isEqualToString:_notificationOpenedAppID]) {
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:remoteNotification];
     [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
-
+  }
 
   // Forward on to any other delegates.
   if (_originalNotificationCenterDelegate != nil &&
