@@ -318,15 +318,22 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))completionHandler
     API_AVAILABLE(macos(10.14), ios(10.0)) {
+  // We only want to handle FCM notifications.
+
+  // FIX - bug on iOS 18 which results in duplicate foreground notifications posted
+  // See this Apple issue: https://forums.developer.apple.com/forums/thread/761597
+  // when it has been resolved, "_foregroundUniqueIdentifier" can be removed (i.e. the commit for
+  // this fix)
   NSString *notificationIdentifier = notification.request.identifier;
 
-
+  if (notification.request.content.userInfo[@"gcm.message_id"] &&
+      ![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin NSDictionaryFromUNNotification:notification];
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
+  }
 
-
-  // Forward on to any other delegates and allow them to control presentation behavior.
+  // Forward on to any other delegates amd allow them to control presentation behavior.
   if (_originalNotificationCenterDelegate != nil &&
       _originalNotificationCenterDelegateRespondsTo.willPresentNotification) {
     [_originalNotificationCenterDelegate userNotificationCenter:center
@@ -358,16 +365,14 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
              withCompletionHandler:(void (^)(void))completionHandler
     API_AVAILABLE(macos(10.14), ios(10.0)) {
   NSDictionary *remoteNotification = response.notification.request.content.userInfo;
+  _notificationOpenedAppID = remoteNotification[@"gcm.message_id"];
+  // We only want to handle FCM notifications and stop firing `onMessageOpenedApp()` when app is
+  // coming from a terminated state.
 
-  // Always store the notification identifier for tap detection
-  _notificationOpenedAppID = response.notification.request.identifier;
+    NSDictionary *notificationDict =
+        [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:remoteNotification];
+    [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
 
-  // Convert to dictionary and ensure it has a messageId
-  NSDictionary *notificationDict =
-      [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:remoteNotification];
-
-  // Always trigger onMessageOpenedApp for any notification interaction
-  [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
 
   // Forward on to any other delegates.
   if (_originalNotificationCenterDelegate != nil &&
@@ -433,14 +438,17 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 #if TARGET_OS_OSX
 - (void)application:(NSApplication *)application
     didReceiveRemoteNotification:(NSDictionary *)userInfo {
-  NSDictionary *notificationDict =
-      [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
+  // Only handle notifications from FCM.
 
-  [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
+    NSDictionary *notificationDict =
+        [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
-  if (![NSApplication sharedApplication].isActive){
-    [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
-  }
+    if ([NSApplication sharedApplication].isActive) {
+      [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
+    } else {
+      [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
+    }
+
 }
 #endif
 
@@ -457,29 +465,65 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 #endif
   NSDictionary *notificationDict =
       [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
+  // Only handle notifications from FCM.
 
-  UIApplicationState state = [UIApplication sharedApplication].applicationState;
+    if ([UIApplication sharedApplication].applicationState == UIApplicationStateBackground) {
+      __block BOOL completed = NO;
 
-  // Handle notification taps for all notification types (FCM, APNS, Sendbird, etc.)
-  if (state == UIApplicationStateInactive || state == UIApplicationStateBackground) {
-    // Store a unique identifier for this notification
-    _notificationOpenedAppID = [[NSUUID UUID] UUIDString];
-    // Always trigger onMessageOpenedApp for any notification tap
-    [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
-    completionHandler(UIBackgroundFetchResultNewData);
+      // If app is in background state, register background task to guarantee async queues aren't
+      // frozen.
+      UIBackgroundTaskIdentifier __block backgroundTaskId =
+          [application beginBackgroundTaskWithExpirationHandler:^{
+            @synchronized(self) {
+              if (completed == NO) {
+                completed = YES;
+                completionHandler(UIBackgroundFetchResultNewData);
+                if (backgroundTaskId != UIBackgroundTaskInvalid) {
+                  [application endBackgroundTask:backgroundTaskId];
+                  backgroundTaskId = UIBackgroundTaskInvalid;
+                }
+              }
+            }
+          }];
+
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)),
+                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+                       @synchronized(self) {
+                         if (completed == NO) {
+                           completed = YES;
+                           completionHandler(UIBackgroundFetchResultNewData);
+                           if (backgroundTaskId != UIBackgroundTaskInvalid) {
+                             [application endBackgroundTask:backgroundTaskId];
+                             backgroundTaskId = UIBackgroundTaskInvalid;
+                           }
+                         }
+                       }
+                     });
+
+      [_channel invokeMethod:@"Messaging#onBackgroundMessage"
+                   arguments:notificationDict
+                      result:^(id _Nullable result) {
+                        @synchronized(self) {
+                          if (completed == NO) {
+                            completed = YES;
+                            completionHandler(UIBackgroundFetchResultNewData);
+                            if (backgroundTaskId != UIBackgroundTaskInvalid) {
+                              [application endBackgroundTask:backgroundTaskId];
+                              backgroundTaskId = UIBackgroundTaskInvalid;
+                            }
+                          }
+                        }
+                      }];
+    } else {
+      // If "alert" (i.e. notification) is present in userInfo, this will be called by the other
+      // "Messaging#onMessage" channel handler
+      if (userInfo[@"aps"] != nil && userInfo[@"aps"][@"alert"] == nil) {
+        [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
+      }
+      completionHandler(UIBackgroundFetchResultNoData);
+    }
+
     return YES;
-  }
-
-  // Handle messages based on application state
-  if (state == UIApplicationStateBackground) {
-    [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
-    completionHandler(UIBackgroundFetchResultNewData);
-  } else {
-    [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-    completionHandler(UIBackgroundFetchResultNoData);
-  }
-
-  return YES;
 }  // didReceiveRemoteNotification
 #endif
 
@@ -780,85 +824,187 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   NSMutableDictionary *notification = [[NSMutableDictionary alloc] init];
   NSMutableDictionary *notificationIOS = [[NSMutableDictionary alloc] init];
 
-  // message.messageId - try different possible keys for message ID
-  NSString *messageId = userInfo[@"gcm.message_id"] ?:
-                       userInfo[@"google.message_id"] ?:
-                       userInfo[@"message_id"];
-
-  if (messageId == nil) {
-    // Generate a unique ID for non-FCM notifications (like Sendbird APNS)
-    messageId = [[NSUUID UUID] UUIDString];
-  }
-  message[@"messageId"] = messageId;
-
-  // For non-FCM notifications (like Sendbird), copy all data except reserved keys
-  NSSet *reservedKeys = [NSSet setWithArray:@[@"aps", @"gcm.message_id", @"google.message_id", @"message_id"]];
-
-  // First copy all data including nested dictionaries
-  [userInfo enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
-    if (![reservedKeys containsObject:key]) {
-      // Ensure the value is JSON serializable
-      if ([value isKindOfClass:[NSString class]] ||
-          [value isKindOfClass:[NSNumber class]] ||
-          [value isKindOfClass:[NSArray class]] ||
-          [value isKindOfClass:[NSDictionary class]] ||
-          [value isKindOfClass:[NSNull class]]) {
-        data[key] = value;
-      } else {
-        data[key] = [value description];
-      }
+  // message.data
+  for (id key in userInfo) {
+    // message.messageId
+    if ([key isEqualToString:@"gcm.message_id"] || [key isEqualToString:@"google.message_id"] ||
+        [key isEqualToString:@"message_id"]) {
+      message[@"messageId"] = userInfo[key];
+      continue;
     }
-  }];
 
+    // message.messageType
+    if ([key isEqualToString:@"message_type"]) {
+      message[@"messageType"] = userInfo[key];
+      continue;
+    }
+
+    // message.collapseKey
+    if ([key isEqualToString:@"collapse_key"]) {
+      message[@"collapseKey"] = userInfo[key];
+      continue;
+    }
+
+    // message.from
+    if ([key isEqualToString:@"from"]) {
+      message[@"from"] = userInfo[key];
+      continue;
+    }
+
+    // message.sentTime
+    if ([key isEqualToString:@"google.c.a.ts"]) {
+      message[@"sentTime"] = userInfo[key];
+      continue;
+    }
+
+    // message.to
+    if ([key isEqualToString:@"to"] || [key isEqualToString:@"google.to"]) {
+      message[@"to"] = userInfo[key];
+      continue;
+    }
+
+    // build data dict from remaining keys but skip keys that shouldn't be included in data
+    if ([key isEqualToString:@"aps"] || [key hasPrefix:@"gcm."] || [key hasPrefix:@"google."]) {
+      continue;
+    }
+
+    // message.apple.imageUrl
+    if ([key isEqualToString:@"fcm_options"]) {
+      if (userInfo[key] != nil && userInfo[key][@"image"] != nil) {
+        notificationIOS[@"imageUrl"] = userInfo[key][@"image"];
+      }
+      continue;
+    }
+
+    data[key] = userInfo[key];
+  }
   message[@"data"] = data;
 
-  // Handle notification content from aps dictionary
   if (userInfo[@"aps"] != nil) {
     NSDictionary *apsDict = userInfo[@"aps"];
-
-    // Handle alert content
-    id alert = apsDict[@"alert"];
-    if (alert != nil) {
-      if ([alert isKindOfClass:[NSString class]]) {
-        notification[@"title"] = alert;
-        notification[@"body"] = alert;
-      } else if ([alert isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *alertDict = (NSDictionary *)alert;
-        if (alertDict[@"title"] != nil) notification[@"title"] = alertDict[@"title"];
-        if (alertDict[@"body"] != nil) notification[@"body"] = alertDict[@"body"];
-        if (alertDict[@"subtitle"] != nil) notificationIOS[@"subtitle"] = alertDict[@"subtitle"];
-      }
+    // message.category
+    if (apsDict[@"category"] != nil) {
+      message[@"category"] = apsDict[@"category"];
     }
 
-    // Handle other aps content
-    if (apsDict[@"badge"] != nil) notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
+    // message.threadId
+    if (apsDict[@"thread-id"] != nil) {
+      message[@"threadId"] = apsDict[@"thread-id"];
+    }
+
+    // message.contentAvailable
+    if (apsDict[@"content-available"] != nil) {
+      message[@"contentAvailable"] = @([apsDict[@"content-available"] boolValue]);
+    }
+
+    // message.mutableContent
+    if (apsDict[@"mutable-content"] != nil && [apsDict[@"mutable-content"] intValue] == 1) {
+      message[@"mutableContent"] = @([apsDict[@"mutable-content"] boolValue]);
+    }
+
+    // message.notification.*
+    if (apsDict[@"alert"] != nil) {
+      // can be a string or dictionary
+      if ([apsDict[@"alert"] isKindOfClass:[NSString class]]) {
+        // message.notification.title
+        notification[@"title"] = apsDict[@"alert"];
+      } else if ([apsDict[@"alert"] isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *apsAlertDict = apsDict[@"alert"];
+
+        // message.notification.title
+        if (apsAlertDict[@"title"] != nil) {
+          notification[@"title"] = apsAlertDict[@"title"];
+        }
+
+        // message.notification.titleLocKey
+        if (apsAlertDict[@"title-loc-key"] != nil) {
+          notification[@"titleLocKey"] = apsAlertDict[@"title-loc-key"];
+        }
+
+        // message.notification.titleLocArgs
+        if (apsAlertDict[@"title-loc-args"] != nil) {
+          notification[@"titleLocArgs"] = apsAlertDict[@"title-loc-args"];
+        }
+
+        // message.notification.body
+        if (apsAlertDict[@"body"] != nil) {
+          notification[@"body"] = apsAlertDict[@"body"];
+        }
+
+        // message.notification.bodyLocKey
+        if (apsAlertDict[@"loc-key"] != nil) {
+          notification[@"bodyLocKey"] = apsAlertDict[@"loc-key"];
+        }
+
+        // message.notification.bodyLocArgs
+        if (apsAlertDict[@"loc-args"] != nil) {
+          notification[@"bodyLocArgs"] = apsAlertDict[@"loc-args"];
+        }
+
+        // Apple only
+        // message.notification.apple.subtitle
+        if (apsAlertDict[@"subtitle"] != nil) {
+          notificationIOS[@"subtitle"] = apsAlertDict[@"subtitle"];
+        }
+
+        // Apple only
+        // message.notification.apple.subtitleLocKey
+        if (apsAlertDict[@"subtitle-loc-key"] != nil) {
+          notificationIOS[@"subtitleLocKey"] = apsAlertDict[@"subtitle-loc-key"];
+        }
+
+        // Apple only
+        // message.notification.apple.subtitleLocArgs
+        if (apsAlertDict[@"subtitle-loc-args"] != nil) {
+          notificationIOS[@"subtitleLocArgs"] = apsAlertDict[@"subtitle-loc-args"];
+        }
+
+        // Apple only
+        // message.notification.apple.badge
+        if (apsDict[@"badge"] != nil) {
+          notificationIOS[@"badge"] = [NSString stringWithFormat:@"%@", apsDict[@"badge"]];
+        }
+      }
+
+      notification[@"apple"] = notificationIOS;
+      message[@"notification"] = notification;
+    }
+
+    // message.notification.apple.sound
     if (apsDict[@"sound"] != nil) {
       if ([apsDict[@"sound"] isKindOfClass:[NSString class]]) {
-        notificationIOS[@"sound"] = @{
+        // message.notification.apple.sound
+        notification[@"sound"] = @{
           @"name" : apsDict[@"sound"],
           @"critical" : @NO,
           @"volume" : @1,
         };
+      } else if ([apsDict[@"sound"] isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *apsSoundDict = apsDict[@"sound"];
+        NSMutableDictionary *notificationIOSSound = [[NSMutableDictionary alloc] init];
+
+        // message.notification.apple.sound.name String
+        if (apsSoundDict[@"name"] != nil) {
+          notificationIOSSound[@"name"] = apsSoundDict[@"name"];
+        }
+
+        // message.notification.apple.sound.critical Boolean
+        if (apsSoundDict[@"critical"] != nil) {
+          notificationIOSSound[@"critical"] = @([apsSoundDict[@"critical"] boolValue]);
+        }
+
+        // message.notification.apple.sound.volume Number
+        if (apsSoundDict[@"volume"] != nil) {
+          notificationIOSSound[@"volume"] = apsSoundDict[@"volume"];
+        }
+
+        // message.notification.apple.sound
+        notificationIOS[@"sound"] = notificationIOSSound;
       }
+
+      notification[@"apple"] = notificationIOS;
+      message[@"notification"] = notification;
     }
-
-    // For data-only notifications (like Sendbird), copy all aps content to data
-    [apsDict enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
-      if (![key isEqualToString:@"alert"] &&
-          ![key isEqualToString:@"badge"] &&
-          ![key isEqualToString:@"sound"]) {
-        // Add aps_ prefix to avoid conflicts
-        data[[@"aps_" stringByAppendingString:key]] = value;
-      }
-    }];
-  }
-
-  notification[@"apple"] = notificationIOS;
-  message[@"notification"] = notification;
-
-  // For data-only notifications, ensure we have at least an empty notification object
-  if ([notification count] == 0) {
-    message[@"notification"] = @{@"apple": @{}};
   }
 
   return message;
@@ -881,8 +1027,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   @synchronized(self) {
     // Only return if initial notification was sent when app is terminated. Also ensure that
     // it was the initial notification that was tapped to open the app.
-    if (_initialNotification != nil &&
-        [_initialNotificationID isEqualToString:_notificationOpenedAppID]) {
+    if (_initialNotification != nil) {
       NSDictionary *initialNotificationCopy = [_initialNotification copy];
       _initialNotification = nil;
       return initialNotificationCopy;
