@@ -438,17 +438,14 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
 #if TARGET_OS_OSX
 - (void)application:(NSApplication *)application
     didReceiveRemoteNotification:(NSDictionary *)userInfo {
-
-  NSDictionary *notificationDict =
-      [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
-
-  if ([NSApplication sharedApplication].isActive) {
-    [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-  }
-
+  // Only handle notifications from FCM.
   if (userInfo[@"gcm.message_id"]) {
+    NSDictionary *notificationDict =
+        [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:userInfo];
 
-    if(![NSApplication sharedApplication].isActive) {
+    if ([NSApplication sharedApplication].isActive) {
+      [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
+    } else {
       [_channel invokeMethod:@"Messaging#onBackgroundMessage" arguments:notificationDict];
     }
   }
