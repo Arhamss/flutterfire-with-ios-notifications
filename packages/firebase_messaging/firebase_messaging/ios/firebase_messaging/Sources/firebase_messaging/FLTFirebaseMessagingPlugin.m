@@ -1029,12 +1029,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   @synchronized(self) {
     // Only return if initial notification was sent when app is terminated. Also ensure that
     // it was the initial notification that was tapped to open the app.
-    if (_initialNotification != nil &&
-        [_initialNotificationID isEqualToString:_notificationOpenedAppID]) {
+//    if (_initialNotification != nil &&
+//        [_initialNotificationID isEqualToString:_notificationOpenedAppID]) {
       NSDictionary *initialNotificationCopy = [_initialNotification copy];
       _initialNotification = nil;
       return initialNotificationCopy;
-    }
+   // }
   }
 
   return nil;
