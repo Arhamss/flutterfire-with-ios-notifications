@@ -326,8 +326,8 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   // this fix)
   NSString *notificationIdentifier = notification.request.identifier;
 
-  if (
-      ![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
+//  if (notification.request.content.userInfo[@"gcm.message_id"] &&
+      if(![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin NSDictionaryFromUNNotification:notification];
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
@@ -368,11 +368,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   _notificationOpenedAppID = remoteNotification[@"gcm.message_id"];
   // We only want to handle FCM notifications and stop firing `onMessageOpenedApp()` when app is
   // coming from a terminated state.
-
+  //if (_notificationOpenedAppID != nil &&
+   //   ![_initialNotificationID isEqualToString:_notificationOpenedAppID]) {
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:remoteNotification];
     [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
-
+  //}
 
   // Forward on to any other delegates.
   if (_originalNotificationCenterDelegate != nil &&
@@ -517,16 +518,10 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     } else {
       // If "alert" (i.e. notification) is present in userInfo, this will be called by the other
       // "Messaging#onMessage" channel handler
-      if (userInfo[@"gcm.message_id"]) {
-        if (userInfo[@"aps"] != nil && userInfo[@"aps"][@"alert"] == nil) {
-          [_channel invokeMethod:@"Messaging#onMessage"
-                       arguments:notificationDict];
-        }
-        completionHandler(UIBackgroundFetchResultNoData);
+      if (userInfo[@"aps"] != nil && userInfo[@"aps"][@"alert"] == nil) {
+        [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
       }
-      else {
-        return NO;
-      }
+      completionHandler(UIBackgroundFetchResultNoData);
     }
 
     return YES;
@@ -614,6 +609,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   if ([permissions[@"criticalAlert"] isEqual:@(YES)]) {
     if (@available(iOS 12.0, *)) {
       options |= UNAuthorizationOptionCriticalAlert;
+    }
+  }
+
+  if ([permissions[@"providesAppNotificationSettings"] isEqual:@(YES)]) {
+    if (@available(iOS 12.0, *)) {
+      options |= UNAuthorizationOptionProvidesAppNotificationSettings;
     }
   }
 
@@ -789,6 +790,15 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
       NSNumberForUNNotificationSetting:settings.notificationCenterSetting];
   settingsDictionary[@"timeSensitive"] = timeSensitive;
 
+  if (@available(iOS 12.0, *)) {
+    if (settings.providesAppNotificationSettings) {
+      settingsDictionary[@"providesAppNotificationSettings"] = @1;
+    } else {
+      settingsDictionary[@"providesAppNotificationSettings"] = @0;
+    }
+  } else {
+    settingsDictionary[@"providesAppNotificationSettings"] = @-1;
+  }
   return settingsDictionary;
 }
 
@@ -1035,12 +1045,12 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   @synchronized(self) {
     // Only return if initial notification was sent when app is terminated. Also ensure that
     // it was the initial notification that was tapped to open the app.
-//    if (_initialNotification != nil &&
-//        [_initialNotificationID isEqualToString:_notificationOpenedAppID]) {
+    if (_initialNotification != nil &&
+        [_initialNotificationID isEqualToString:_notificationOpenedAppID]) {
       NSDictionary *initialNotificationCopy = [_initialNotification copy];
       _initialNotification = nil;
       return initialNotificationCopy;
-   // }
+    }
   }
 
   return nil;
