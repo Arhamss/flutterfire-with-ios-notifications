@@ -319,42 +319,55 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
              (void (^)(UNNotificationPresentationOptions options))completionHandler
     API_AVAILABLE(macos(10.14), ios(10.0)) {
   // We only want to handle FCM notifications.
-
-  // FIX - bug on iOS 18 which results in duplicate foreground notifications posted
-  // See this Apple issue: https://forums.developer.apple.com/forums/thread/761597
-  // when it has been resolved, "_foregroundUniqueIdentifier" can be removed (i.e. the commit for
-  // this fix)
   NSString *notificationIdentifier = notification.request.identifier;
 
-//  if (notification.request.content.userInfo[@"gcm.message_id"] &&
-      if(![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
+  if(![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin NSDictionaryFromUNNotification:notification];
-    [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
-  }
-
-  // Forward on to any other delegates amd allow them to control presentation behavior.
-  if (_originalNotificationCenterDelegate != nil &&
-      _originalNotificationCenterDelegateRespondsTo.willPresentNotification) {
-    [_originalNotificationCenterDelegate userNotificationCenter:center
-                                        willPresentNotification:notification
-                                          withCompletionHandler:completionHandler];
+    
+    // Invoke onMessage and prevent notification display by calling completionHandler with no options
+    [_channel invokeMethod:@"Messaging#onMessage" 
+                arguments:notificationDict
+                   result:^(id _Nullable result) {
+      // If result is explicitly set to show notification, we'll forward to original delegate
+      if ([result isKindOfClass:[NSNumber class]] && [result boolValue]) {
+        if (_originalNotificationCenterDelegate != nil &&
+            _originalNotificationCenterDelegateRespondsTo.willPresentNotification) {
+          [_originalNotificationCenterDelegate userNotificationCenter:center
+                                            willPresentNotification:notification
+                                              withCompletionHandler:completionHandler];
+        } else {
+          UNNotificationPresentationOptions presentationOptions = UNNotificationPresentationOptionNone;
+          NSDictionary *persistedOptions = [[NSUserDefaults standardUserDefaults]
+              dictionaryForKey:kMessagingPresentationOptionsUserDefaults];
+          if (persistedOptions != nil) {
+            if ([persistedOptions[@"alert"] isEqual:@(YES)]) {
+              presentationOptions |= UNNotificationPresentationOptionAlert;
+            }
+            if ([persistedOptions[@"badge"] isEqual:@(YES)]) {
+              presentationOptions |= UNNotificationPresentationOptionBadge;
+            }
+            if ([persistedOptions[@"sound"] isEqual:@(YES)]) {
+              presentationOptions |= UNNotificationPresentationOptionSound;
+            }
+          }
+          completionHandler(presentationOptions);
+        }
+      } else {
+        // By default, don't show notification if onMessage was triggered
+        completionHandler(UNNotificationPresentationOptionNone);
+      }
+    }];
   } else {
-    UNNotificationPresentationOptions presentationOptions = UNNotificationPresentationOptionNone;
-    NSDictionary *persistedOptions = [[NSUserDefaults standardUserDefaults]
-        dictionaryForKey:kMessagingPresentationOptionsUserDefaults];
-    if (persistedOptions != nil) {
-      if ([persistedOptions[@"alert"] isEqual:@(YES)]) {
-        presentationOptions |= UNNotificationPresentationOptionAlert;
-      }
-      if ([persistedOptions[@"badge"] isEqual:@(YES)]) {
-        presentationOptions |= UNNotificationPresentationOptionBadge;
-      }
-      if ([persistedOptions[@"sound"] isEqual:@(YES)]) {
-        presentationOptions |= UNNotificationPresentationOptionSound;
-      }
+    // Forward to original delegate for notifications we're not handling
+    if (_originalNotificationCenterDelegate != nil &&
+        _originalNotificationCenterDelegateRespondsTo.willPresentNotification) {
+      [_originalNotificationCenterDelegate userNotificationCenter:center
+                                          willPresentNotification:notification
+                                            withCompletionHandler:completionHandler];
+    } else {
+      completionHandler(UNNotificationPresentationOptionNone);
     }
-    completionHandler(presentationOptions);
   }
   _foregroundUniqueIdentifier = notificationIdentifier;
 }
