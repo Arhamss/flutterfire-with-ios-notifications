@@ -373,7 +373,7 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin remoteMessageUserInfoToDict:remoteNotification];
     [_channel invokeMethod:@"Messaging#onMessageOpenedApp" arguments:notificationDict];
-  //}
+  }
 
   // Forward on to any other delegates.
   if (_originalNotificationCenterDelegate != nil &&
