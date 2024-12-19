@@ -524,6 +524,9 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
         }
         completionHandler(UIBackgroundFetchResultNoData);
       }
+      else {
+        return NO;
+      }
     }
 
     return YES;
