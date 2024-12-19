@@ -326,8 +326,8 @@ NSString *const kMessagingPresentationOptionsUserDefaults =
   // this fix)
   NSString *notificationIdentifier = notification.request.identifier;
 
-if (notification.request.content.userInfo[@"gcm.message_id"] &&
-      ![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
+//  if (notification.request.content.userInfo[@"gcm.message_id"] &&
+      if(![notificationIdentifier isEqualToString:_foregroundUniqueIdentifier]) {
     NSDictionary *notificationDict =
         [FLTFirebaseMessagingPlugin NSDictionaryFromUNNotification:notification];
     [_channel invokeMethod:@"Messaging#onMessage" arguments:notificationDict];
